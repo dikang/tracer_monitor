@@ -8,19 +8,20 @@
  *    config_memory @hart(i)
  *       SP    : BASE_ADDR_MONITOR{i-1}
  *       TP    : SP - STACK_SIZE(0x200000) - TP_SIZE(0x10000)
- *       GP    : TP - GP_SIZE(0x10000)
+ *       GP    : TP - GP_SIZE(0x10000)	-- this is not needed for a regular tasklet
  *       Config: BASE_ADDR_MONITOR{i} 
- *       BASE_ADDR_MONITOR(i): BASE_ADDR_MONITOR{0} + TASKLET_SIZE(0x400000) * i
+ *       BASE_ADDR_MONITOR(i): BASE_ADDR_MONITOR{0} + CONFIG_MEM_SIZE(0x400000) * i
  */
  
 #define BASE_ADDR_MONITOR	0x80400000
 #define CONFIG_SIZE		0x80000
 #define TP_SIZE			0x80000
 #define GP_SIZE			0x80000
-#define TASKLET_SIZE		0x400000
+#define CONFIG_MEM_SIZE		0x400000
 #define STACK_SIZE		0x200000
-#define CONFIG_ADDR(n) 	(BASE_ADDR_MONITOR + TASKLET_SIZE * (n))
+#define CONFIG_ADDR(n) 	(BASE_ADDR_MONITOR + CONFIG_MEM_SIZE * (n))
 #define CODE_ADDR(n) 	(0x80000000)
+#define PC_ADDR(n) 	(CODE_ADDR((n+1)))
 #define SP_ADDR(n) 	(CONFIG_ADDR((n+1)))
 #define TP_ADDR(n) 	(SP_ADDR(n) - STACK_SIZE - TP_SIZE)
 #define GP_ADDR(n) 	(TP_ADDR(n) - GP_SIZE)
@@ -32,14 +33,14 @@
  * NxN table of entries of two 32 bit words (CMD, subCMD)
  */
 typedef struct {
-     uint64_t pc;	// pc value of the tasklet
+     uint64_t cp;	// cp value of the tasklet
      uint16_t slot;	// slot number ??
      uint8_t  active;	// enable, disable
      uint8_t  context_save;	// context_save or not
 } switch_cmd ;
 
 typedef struct {
-     uint64_t pc;
+     uint64_t cp;
      uint8_t  active;
      uint8_t  context_save;	// context_save or not
      uint8_t  dummy1;
@@ -64,6 +65,7 @@ typedef struct {
 #define INT_TABLE_SIZE	0x40
 
 typedef struct {
+    uint64_t pc;	/* PC */
     uint64_t sp;
     uint64_t tp;
     uint64_t gp;
@@ -82,7 +84,9 @@ typedef struct {
     tasklet_queue tqueue;
 } tasklet_arg;
 
-#define TASKLET_ARG_OFFSET	(35* sizeof(uint64_t) + 32*sizeof(float))
+#define TASKLET_ARG_OFFSET	(36* sizeof(uint64_t) + 32*sizeof(float))
+#define TASKLET_ENTRY_OFFSET	(TASKLET_ARG_OFFSET + sizeof(uint32_t))
+#define TASKLET_HARTID_OFFSET	(TASKLET_ENTRY_OFFSET + sizeof(uint32_t))
 
 /* Memory layout of interrupt messages */
 #define BASE_ADDR_INT_MSGQ   0x80100000

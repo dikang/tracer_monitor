@@ -8,9 +8,12 @@
 .equ MTIMECMP_OFFSET_HART, 0x1000
 .equ SOFTWARE_INT, 0x3
 .equ TIMER_INT, 0x7
-.equ TASKLET_ARG_OFFSET, 408
-.equ TASKLET_ENTRY_OFFSET, 412	# TASKLET_ARG_OFFSET + 4
-.equ TASKLET_HARTID_OFFSET, 416	# TASKLET_ENTRY_OFFSET + 4
+
+# Control block offsets
+.equ PC_OFFSET, 0
+.equ SP_OFFSET, 8
+.equ TP_OFFSET, 16
+.equ GP_OFFSET, 24
 
 .if FPGA
 .equ UART_BASE, 0x60000100
@@ -19,9 +22,11 @@
 .endif
 
 # s/w info
-.equ CONFIG_ARG_OFFSET, 32
 .equ CONFIG_MEM_SIZE, 0x400000
-.equ CONFIG_MEM_BASE, 0x80400000
+.equ BASE_ADDR_MONITOR, 0x80400000
+.equ TASKLET_ARG_OFFSET, 416
+.equ TASKLET_ENTRY_OFFSET, 420	# TASKLET_ARG_OFFSET + 4
+.equ TASKLET_HARTID_OFFSET, 424	# TASKLET_ENTRY_OFFSET + 4
 
 .equ DEBUG_ALL, 0
 .equ DEBUG, 1
@@ -35,30 +40,25 @@
 .globl _start
 _start:
 
-    # Clear all interrupt enable bits
+    # Clear all interrupt enable bits (for monitor only)
     li a1, 0xFFFFFFFF       # Load immediate value with all bits set
     csrc mie, a1            # Clear all bits in MIE register
 
     # Initialize from configuration memory
-    li a1, CONFIG_MEM_BASE
+    li a1, BASE_ADDR_MONITOR
     li a2, CONFIG_MEM_SIZE 
     csrr a0, mhartid	# Hart ID
     mul a2, a2, a0
-    add a1, a1, a2
-    ld sp, 0(a1)
-    ld tp, 8(a1)
-    ld gp, 16(a1)
+    add a1, a1, a2	# base address of CONFIG_MEM of the hart
+    ld sp, SP_OFFSET(a1)
+    ld tp, TP_OFFSET(a1)
+    ld gp, GP_OFFSET(a1)
+    sw a0, TASKLET_HARTID_OFFSET(a1)
     add fp, sp, 0
 
-    li a3, 1
-    bne a0, a3, nextL
-    addi a0, sp, 0
-    call print_hexint
-    csrr a0, mhartid	# Hart ID
-nextL:
+    lw a2, TASKLET_ENTRY_OFFSET(a1)	# entry (initially 0, otherwise nonzero)
 
-    lw a2, TASKLET_ARG_OFFSET(a1)	# entry (initially 0, otherwise nonzero)
-.if DEBUG # expects (hartid)(empty)/n
+.if DEBUG_ALL # expects (hartid)(empty)/n
     li a1, UART_BASE 
     andi a3, a3, 0	# hartid
     addi a3, a0, 48
@@ -76,11 +76,11 @@ nextL:
     j monitor
 
 init_setup:
-    # a1 ahs CONFIG_MEM_BASE of hartid
+    # a1 has BASE_ADDR_MONITOR of hartid
 #    csrr a0, mhartid	# Hart ID
 #    sw a0, TASKLET_HARTID_OFFSET(a1)	# entry (hartid)
 
-.if DEBUG	# expects I(hart id)/n
+.if DEBUG_ALL	# expects I(hart id)/n
     csrr a0, mhartid	# Hart ID
     li a1, UART_BASE 
     andi a3, a3, 0	
@@ -150,20 +150,11 @@ trap_vector:	# ISR
     csrr a1, mepc           # Save the machine exception program counter (current PC)
     sd a1, 31*8(sp)         # Save PC
 
-.if DEBUG_ALL	# ret
-    # print ret
-    li a1, UART_BASE 
-    andi a2, a2, 0
-    addi a2, a2, ASCII_T
-    sw a2, 0(a1)
-    andi a2, a2, 0
-    addi a2, a2, ASCII_newln 
-    sw a2, 0(a1)
-.endif
     # check if it is software interrupt. If not, mret
     csrr a1, mcause          # Read the cause of the trap
     bgez a1, handle_exception # it is exception
 
+.if DEBUG_ALL
     li a3, UART_BASE 
     li a2, ASCII_C
     sw a2, 0(a3)
@@ -173,14 +164,14 @@ trap_vector:	# ISR
     andi a2, a2, 0
     addi a2, a2, ASCII_newln 
     sw a2, 0(a3)
+.endif
 
     andi a1, a1, 0x3f	# mask interrupt bit at the top
-    andi a2, a2, 0
-    addi a2, a2, SOFTWARE_INT
+    li   a2, SOFTWARE_INT
     bne a1, a2, handle_other_traps # if != 3 (handle_other_traps)
 
 handle_software_int:
-.if DEBUG	# ret
+.if DEBUG_ALL	# ret
     # print ret
     li a1, UART_BASE 
     andi a2, a2, 0
@@ -192,15 +183,16 @@ handle_software_int:
 .endif
     
     # calculate config memory start address 
-    li a1, CONFIG_MEM_BASE
+    li a1, BASE_ADDR_MONITOR
     li a2, CONFIG_MEM_SIZE 
     csrr a0, mhartid	# Hart ID
     mul a2, a2, a0
     add a1, a1, a2	# a1 has base address of config memory
-    ld tp,8(a1)
-    ld gp,16(a1)
-    addi a0, a1, CONFIG_ARG_OFFSET # offset from the start of config memory
+    ld tp,TP_OFFSET(a1)
+    ld gp,GP_OFFSET(a1)
 
+
+nextl2:
 .if 0
     # TODO: We should have a separate stack of monitor
     # For now, Let's use the interrupted task's stack
@@ -213,13 +205,14 @@ handle_software_int:
 #    addi sp, a1, -8	# change sp
 #    addi fp, sp, 0
 .endif
+    addi a0, a1, TASKLET_ARG_OFFSET # offset from the start of config memory
     call monitor_main
 .if 0
     # recover sp
 #    ld sp, 0(sp)
 .endif
 
-.if DEBUG	# ret
+.if DEBUG_ALL	# ret
     # print ret
     li a1, UART_BASE 
     andi a2, a2, 0
@@ -341,7 +334,7 @@ final_mret:
 monitor:
     # TODO: call monitor_main() to handle direct request (not via interrut)
 
-.if DEBUG	# expects M(hart id)/n
+.if DEBUG_ALL	# expects M(hart id)/n
     csrr a0, mhartid	# Hart ID
     li a1, UART_BASE 
     andi a3, a3, 0	
@@ -353,13 +346,6 @@ monitor:
     andi a3, a3, 0	# newln
     addi a3, a3, ASCII_newln
     sw a3, 0(a1)
-
-    li a3, 1
-    bne a0, a3, nextl
-    addi a0, sp, 0
-    call print_hexint
-
-nextl:
 
 .endif
 
