@@ -1,36 +1,10 @@
 .include "ascii_tbl.s"
-# Enable this for FPGA platform
-.equ FPGA, 0
-
-# h/w info
-.equ CLINT_BASE, 0x2000000
-.equ MTIMECMP_OFFSET, 0x4000
-.equ MTIMECMP_OFFSET_HART, 0x1000
-.equ SOFTWARE_INT, 0x3
-.equ TIMER_INT, 0x7
-
-# Control block offsets
-.equ PC_OFFSET, 0
-.equ SP_OFFSET, 8
-.equ TP_OFFSET, 16
-.equ GP_OFFSET, 24
-
-.if FPGA
-.equ UART_BASE, 0x60000100
-.else
-.equ UART_BASE, 0x10000000
-.endif
-
-# s/w info
-.equ CONFIG_MEM_SIZE, 0x400000
-.equ BASE_ADDR_MONITOR, 0x80400000
-.equ TASKLET_ARG_OFFSET, 416
-.equ TASKLET_ENTRY_OFFSET, 420	# TASKLET_ARG_OFFSET + 4
-.equ TASKLET_HARTID_OFFSET, 424	# TASKLET_ENTRY_OFFSET + 4
+.include "hw_info.s"
+.include "tasklet_config.s"
 
 .equ DEBUG_ALL, 0
-.equ DEBUG, 1
-.equ TEST_INT, 1
+.equ DEBUG, 0
+.equ TEST_INT, 0
 
 .section .text
 .extern monitor_main
@@ -207,12 +181,14 @@ nextl2:
 .endif
     addi a0, a1, TASKLET_ARG_OFFSET # offset from the start of config memory
     call monitor_main
+    # now a0 has the address of tasklet config_data if switching is to happen
+
 .if 0
     # recover sp
 #    ld sp, 0(sp)
 .endif
 
-.if DEBUG_ALL	# ret
+.if DEBUG # ret
     # print ret
     li a1, UART_BASE 
     andi a2, a2, 0
@@ -230,16 +206,29 @@ nextl2:
 .endif
     
     # Clear software interrupt
-    csrr a0, mhartid	# Hart ID
+    csrr a2, mhartid	# Hart ID
     li a1, CLINT_BASE # CLINT base address:Load address of MSIP register into a1
-    slli a0, a0, 2 	# a0 = hart_id * 4
-    add a1, a1, a0
+    slli a2, a2, 2 	# a2 = hart_id * 4
+    add a1, a1, a2
     li a2, 0         # Load immediate value 0 into a2
     sw a2, 0(a1)     # Write 1 to MSIP register to clear software interrupt
 
-    j final_mret                  # return from interrupt
+    # TODO: if the interrupted tasklet is the tasklet to be switched
+    #       do not start the tasklet newly, but simply return to it.
+    j final_mret     # a0 has the value of return PC if non-zero
+
+.if DEBUG # ret
+    # print ret
+    li a1, UART_BASE 
+    andi a2, a2, 0
+    addi a2, a2, ASCII_T
+    sw a2, 0(a1)
+    addi a2, a2, ASCII_newln 
+    sw a2, 0(a1)
+.endif
 
 handle_exception:	# print E(code)
+.if 0
     csrr a0, mhartid	# Hart ID
     li a3, UART_BASE 
     addi a2, a0, ASCII_0
@@ -250,12 +239,14 @@ handle_exception:	# print E(code)
 
     addi a1, a1, ASCII_0	# code + ASCII_0
     sw a1, 0(a3)
-
+.endif
     csrr t0, mtval
 
     andi a2, a2, 0
     addi a2, a2, ASCII_newln 
     sw a2, 0(a3)
+
+    mv a0, x0
     j final_mret                  # return from interrupt
     
 handle_other_traps:
@@ -270,6 +261,7 @@ handle_other_traps:
     sw a2, 0(a1)
 .endif
 
+    mv a0, x0
     j final_mret
 
 external_interrupt_handler:
@@ -277,6 +269,7 @@ external_interrupt_handler:
     # in the PLIC (Platform-Level Interrupt Controller)
     li a1, 0xc000000  # Replace with actual PLIC base address
     sw zero, 0(a1)              # Clear the interrupt
+    mv a0, x0
 
 .if DEBUG	# ret
     # print ret
@@ -291,10 +284,18 @@ external_interrupt_handler:
     
     # Add code to handle the specific interrupt here
 
-final_mret:
+final_mret:	# a0 has the return PC value if a0 is nonzero
     # Restore all general-purpose registers
     ld a1, 31*8(sp)         # Restore PC
     csrw mepc, a1           # Write back to mepc
+    beq a0, x0, target_return	# normal return from ISR
+  
+    # Jump to new tasklet
+    la a1, _tasklet_start
+    csrw mepc, a1           # Write back to mepc with target tasklet
+    mret 		    # no need to recover registers
+
+target_return:
     ld ra, 0(sp)            # Restore return address
     ld t0, 1*8(sp)          # Restore temporary registers
     ld t1, 2*8(sp)
@@ -357,13 +358,12 @@ monitor:
     csrs mie, a1
 
 .if TEST_INT
-    # test code: hara1 triggers software interrupt on Hart1 and 2
+    # test code: hart1 triggers software interrupt on Hart1 and 2
     csrr a0, mhartid	# Hart ID
     li a2, 0
-    beq a0, a2, hart0 # If Hara1, trigger sw INT to Hara2 and Hart2
+    beq a0, a2, hart0 # If Hart1, trigger sw INT to Hart2 and Hart2
 
 tloop:	# HART 1, 2: infinite loop
-
 
     wfi
     j tloop
@@ -376,8 +376,33 @@ hart0:
 hart0_wfi:
     wfi
     j hart0_wfi
+.else
+    csrr a0, mhartid	# Hart ID
+    li a2, 0
+    bne a0, a2, hartN # If non-zero Hart, wfi
+
+hart0:
+
+    li a1, BASE_ADDR_MONITOR
+    addi a0, a1, TASKLET_ARG_OFFSET # offset from the start of config memory
+    call monitor_main
+
+    li a2, CONFIG_MEM_SIZE 
+    # run tasklet_main whose cp is at 0x81000000
+    la a1, _tasklet_start
+    li a0, CONFIG_MASTER_ADDR
+    jalr ra, a1, 0
+ 
+    # if tasklet_main returns, wfi
+hart0_wfi:
+    wfi
+    j hart0_wfi
+
+hartN: 
+    # then busy loop
+hartN_wfi:
+    j hartN_wfi
+
 .endif
 
-busy_loop:
-    j busy_loop
 

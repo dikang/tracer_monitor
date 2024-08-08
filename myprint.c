@@ -1,23 +1,24 @@
 #include <stdint.h>
+#include "tasklet_config.h"
 
-void myprint(int t) {
-    unsigned int * uart = 0x10000000;
-    *uart = t+48;
-    *uart = t+1+48;
-    *uart = t+2+48;
-    *uart = t+3+48;
+void debug_print(char * s) {
+    int i = 0;
+    while (s[i] != '\0') {
+        debug_putc(s[i]);
+        i++;
+    }
 }
 
-void putc(unsigned char c) {
+void debug_putc(unsigned char c) {
 #ifdef INTEL
     printf("%1c", c);
 #else
-    unsigned int * uart = 0x10000000;
+    unsigned int * uart = UART_BASE;
     *uart = c;
 #endif
 }
 
-void print_hexint(uint64_t t) {
+void print_hexuint64(uint64_t t) {
     unsigned char * c;
     unsigned int uc, lc, i, j;
     unsigned char oc[sizeof(t)*2];
@@ -37,14 +38,14 @@ void print_hexint(uint64_t t) {
             oc[i] = 97 + oc[i] - 10;
     }
  
-    putc(48);
-    putc(120);
+    debug_putc(48);
+    debug_putc(120);
 
     for (i = sizeof(t)*2; i > 0; i -= 2) {
-        putc(oc[i-2]);
-        putc(oc[i-1]);
+        debug_putc(oc[i-2]);
+        debug_putc(oc[i-1]);
     }
-    putc('\n');
+    debug_putc('\n');
 }
 
 #ifdef INTEL

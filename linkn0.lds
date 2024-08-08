@@ -9,17 +9,22 @@ MEMORY
 MEMORY
 {
   TEXT (rx) : ORIGIN = 0x80000000, LENGTH = 0x00300000
-  DATA0 (rw) : ORIGIN = 0x80400000, LENGTH = 0x40000
-  DATA1 (rw) : ORIGIN = 0x80800000, LENGTH = 0x40000
-  DATA2 (rw) : ORIGIN = 0x80c00000, LENGTH = 0x40000
-  DATA3 (rw) : ORIGIN = 0x81000000, LENGTH = 0x40000
+  DATA_MON0 (rw) : ORIGIN = 0x80400000, LENGTH = 0x40000
+  DATA_MON1 (rw) : ORIGIN = 0x80800000, LENGTH = 0x40000
+  DATA_MON2 (rw) : ORIGIN = 0x80c00000, LENGTH = 0x40000
+  DATA_MASTER (rw) : ORIGIN = 0x81000000, LENGTH = 0x40000
 }
 
 PHDRS
 {
   text PT_LOAD;
   data PT_LOAD;
+  rodata PT_LOAD;
   bss PT_LOAD;
+  data_mon0 PT_LOAD;
+  data_mon1 PT_LOAD;
+  data_mon2 PT_LOAD;
+  data_master PT_LOAD;
 }
 
 SECTIONS
@@ -29,41 +34,47 @@ SECTIONS
     PROVIDE(_text._start = .);
     *(.text .text.*) 
     PROVIDE(_text._end = .);
-  } > TEXT
+  } > TEXT : text
 
-  . = 0x80400000;
-  .data0 :{
-    PROVIDE(_data0_start = .);
-    *(.data0) 
-    PROVIDE(_data0_end = .);
-  } > DATA0
-
-  . = 0x80800000;
-  .data1 :{
-    PROVIDE(_data1_start = .);
-    *(.data1) 
-    PROVIDE(_data1_end = .);
-  } > DATA1
-
-  . = 0x80c00000;
-  .data2 :{
-    PROVIDE(_data2_start = .);
-    *(.data2) 
-    PROVIDE(_data2_end = .);
-  } > DATA2
-
-  . = 0x81000000;
-  .data3 :{
-    PROVIDE(_data3_start = .);
-    *(.data3) 
-    PROVIDE(_data3_end = .);
-  } > DATA3
+  .data : {
+    PROVIDE(_data_start = .);
+    *(.data .data.*)
+    PROVIDE(_data_end = .);
+  } > TEXT : data
 
   .rodata : {
     PROVIDE(_rodata_start = .);
     *(.rodata .rodata.*)
     PROVIDE(_rodata_end = .);
-  } >ram AT>ram :text
+  } > TEXT : rodata
+
+  . = 0x80400000;
+  .data_mon0 :{
+    PROVIDE(_data_mon0_start = .);
+    *(.data_mon0) 
+    PROVIDE(_data_mon0_end = .);
+  } > DATA_MON0
+
+  . = 0x80800000;
+  .data_mon1 :{
+    PROVIDE(_data_mon1_start = .);
+    *(.data_mon1) 
+    PROVIDE(_data_mon1_end = .);
+  } > DATA_MON1
+
+  . = 0x80c00000;
+  .data_mon2 :{
+    PROVIDE(_data_mon2_start = .);
+    *(.data_mon2) 
+    PROVIDE(_data_mon2_end = .);
+  } > DATA_MON2
+
+  . = 0x81000000;
+  .data_master :{
+    PROVIDE(_data_master_start = .);
+    *(.data_master) 
+    PROVIDE(_data_master_end = .);
+  } > DATA_MASTER
 
 
   PROVIDE(_memory_start = ORIGIN(ram));
